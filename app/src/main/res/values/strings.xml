@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Chatter - OpenAI</string>
-    <string name="apikey">PLACE YOUR OPENAPI KEY/string>
+    <string name="apikey">PLACE YOUR OPENAPI KEY</string>
 </resources>

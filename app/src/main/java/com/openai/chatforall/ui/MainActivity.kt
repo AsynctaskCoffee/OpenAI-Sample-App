@@ -1,127 +1,118 @@
 package com.openai.chatforall.ui
 
-import android.annotation.SuppressLint
-import android.view.View
-import androidx.activity.viewModels
-import com.openai.chatforall.R
-import com.openai.chatforall.base.BaseActivity
-import com.openai.chatforall.data.DataItem
-import com.openai.chatforall.data.MessageData
-import com.openai.chatforall.data.MessageViewType
-import com.openai.chatforall.data.OpenAIChatMessagesItem
-import com.openai.chatforall.data.OpenAIChatRequest
-import com.openai.chatforall.data.OpenAIImageRequest
-import com.openai.chatforall.data.RequestType
-import com.openai.chatforall.databinding.ActivityMainBinding
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Environment
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.openai.chatforall.data.*
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.net.URL
+import java.util.UUID
 
-@SuppressLint("NotifyDataSetChanged")
 @AndroidEntryPoint
-class MainActivity : BaseActivity<ActivityMainBinding>() {
+class MainActivity : ComponentActivity() {
 
-    private val messageList = arrayListOf<MessageData>()
-    private val mainAdapter by lazy { MainAdapter(messageList) }
-    private val viewModel: MainViewModel by viewModels()
-    private var selectedRequestType: RequestType = RequestType.GPT
-    private lateinit var apiKey: String
+    private lateinit var imageUrl: String
 
-    override fun onCreate() {
-        apiKey = getString(R.string.apikey)
-        setupBinding()
-        setupSelectors()
-    }
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (isGranted) {
+                // Permission has been granted, we can proceed with downloading the image
+                lifecycleScope.launch {
+                    downloadImage(imageUrl)
+                }
+            } else {
+                // Explain to the user that the feature is unavailable because the features requires a permission that the user has denied.
+                Toast.makeText(
+                    this,
+                    "Permission denied, we can't download the image",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
 
-    private fun setupBinding() {
-        with(binding) {
-            recyclerView.adapter = mainAdapter
-            sendBtn.setOnClickListener {
-                it.isEnabled = false
-                addMessage(etPrompt.text.toString())
-                addLoadingState()
-                if (selectedRequestType == RequestType.GPT)
-                    sendChatRequest()
-                else
-                    sendImageRequest()
-                etPrompt.setText("")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MainScreen {
+                checkPermissionsAndDownload(it)
             }
         }
     }
 
-    private fun setupSelectors() {
-        with(binding) {
-            chatSelector.setOnClickListener {
-                toggleRequestType(RequestType.GPT, chatSelector, imageSelector)
+    private fun checkPermissionsAndDownload(imageUrl: String) {
+        this.imageUrl = imageUrl
+        when {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED -> {
+                // We have the permission, we can proceed with downloading the image
+                lifecycleScope.launch {
+                    downloadImage(imageUrl)
+                }
             }
-            imageSelector.setOnClickListener {
-                toggleRequestType(RequestType.DALLE, imageSelector, chatSelector)
+
+            shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE) -> {
+                // We should show an explanation to the user, then ask for the permission
+                Toast.makeText(
+                    this,
+                    "We need permission to write to storage to download the image",
+                    Toast.LENGTH_LONG
+                ).show()
+                requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+
+            else -> {
+                // No explanation needed; request the permission
+                requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
     }
 
-    private fun toggleRequestType(requestType: RequestType, active: View, inactive: View) {
-        selectedRequestType = requestType
-        active.setBackgroundResource(R.drawable.bubble_toggle_selected)
-        inactive.setBackgroundResource(R.drawable.bubble_toggle_unselected)
-    }
+    private suspend fun downloadImage(imageUrl: String) = withContext(Dispatchers.IO) {
+        try {
+            val url = URL(imageUrl)
+            val connection = url.openConnection()
+            connection.connect()
 
-    private fun addLoadingState() {
-        messageList.add(
-            MessageData(
-                messageType = MessageViewType.MESSAGE_LOADING
-            )
-        )
-        mainAdapter.notifyDataSetChanged()
-        scrollToBottomAfterMessage()
-    }
+            val input = BufferedInputStream(url.openStream(), 8192)
 
-    @SuppressLint("NotifyDataSetChanged")
-    private fun addMessage(
-        content: String,
-        imageData: List<DataItem?>? = null,
-        viewType: MessageViewType = MessageViewType.MESSAGE_USER
-    ) {
-        if (messageList.size > 0 && messageList.last().messageType == MessageViewType.MESSAGE_LOADING)
-            messageList.removeLast()
-        messageList.add(MessageData(content, imageData, viewType))
-        mainAdapter.notifyDataSetChanged()
-        scrollToBottomAfterMessage()
-        binding.sendBtn.isEnabled = true
-    }
+            val path =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    .toString()
 
-    private fun sendChatRequest() {
-        viewModel.sendChat(
-            apiKey,
-            OpenAIChatRequest(
-                listOf(
-                    OpenAIChatMessagesItem(
-                        content = binding.etPrompt.text.toString()
-                    )
-                )
-            )
-        )
-            .observe(this) {
-                it.body()?.choices?.get(0)?.message?.content?.let { content ->
-                    addMessage(content, viewType = MessageViewType.MESSAGE_OTHER)
-                }
+            // Using UUID to make the filename unique
+            val fileName = "OpenAI_" + UUID.randomUUID().toString() + ".jpg"
+            val output = FileOutputStream(File(path, fileName))
+
+            val data = ByteArray(1024)
+            var total = 0
+            var count: Int
+
+            while (input.read(data).also { count = it } != -1) {
+                total += count
+                output.write(data, 0, count)
             }
-    }
 
-    private fun sendImageRequest() {
-        viewModel.sendImage(apiKey, OpenAIImageRequest(prompt = binding.etPrompt.text.toString()))
-            .observe(this) {
-                it.body()?.data?.let { imageData ->
-                    addMessage(
-                        content = "",
-                        imageData = imageData,
-                        viewType = MessageViewType.MESSAGE_OTHER
-                    )
-                }
-            }
-    }
-
-    override fun initBinding() = ActivityMainBinding.inflate(layoutInflater)
-
-    private fun scrollToBottomAfterMessage() {
-        binding.recyclerView.smoothScrollToPosition(messageList.size - 1)
+            output.flush()
+            output.close()
+            input.close()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
+

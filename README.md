@@ -82,8 +82,6 @@ OpenAI Memories is built with quality in mind. The project includes both UI and 
 
 OpenAI Memories leverages the following dependencies:
 
-- [OpenAI GPT](https://github.com/openai/gpt-3.5-turbo): A library that integrates OpenAI's GPT-3.5 models into Android applications.
-- [OpenAI DALL·E](https://github.com/openai/dall-e): A library that integrates OpenAI's DALL·E model into Android applications.
 - [Jetpack Compose](https://developer.android.com/jetpack/compose): A modern toolkit for building native Android UI.
 - [Hilt](https://developer.android.com/training/dependency-injection/hilt-android): A dependency injection library for Android development.
 - [JUnit](https://junit.org/junit4/): A simple framework to write repeatable tests.
